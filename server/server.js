@@ -1,50 +1,33 @@
 // ============================================================
-//  server.js - Static file server + live multiplayer leaderboard
-//  One process serves the game AND a WebSocket leaderboard, so the
-//  browser can connect to the same origin (deploy-friendly).
+//  server.js - WebSocket leaderboard server for Goldleaf
 // ============================================================
 'use strict';
 
 const http = require('http');
-const fs = require('fs');
-const path = require('path');
 const { WebSocketServer } = require('ws');
 
-const ROOT = path.join(__dirname, '..');
 const PORT = process.env.PORT || 8080;
 
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+// Allowed origins: add your Vercel URL here (no trailing slash).
+// Empty → accept all (fine for local dev; tighten for production).
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
-// ---------- Static file server ----------
+// ---------- Security limits ----------
+const MAX_CONNECTIONS = 100;   // hard cap on concurrent players
+const MAX_MSG_BYTES   = 512;   // largest message we'll parse
+const RATE_LIMIT_MS   = 200;   // min ms between score updates per client
+const HEARTBEAT_MS    = 10000; // ping interval
+
+// ---------- HTTP server (health-check only on this deployment) ----------
 const server = http.createServer((req, res) => {
-  let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (urlPath === '/') urlPath = '/index.html';
-  const filePath = path.normalize(path.join(ROOT, urlPath));
-
-  // prevent path traversal outside the project root
-  if (!filePath.startsWith(ROOT)) {
-    res.writeHead(403); res.end('Forbidden'); return;
-  }
-  fs.readFile(filePath, (err, data) => {
-    if (err) { res.writeHead(404); res.end('Not found'); return; }
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': TYPES[ext] || 'application/octet-stream' });
-    res.end(data);
-  });
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Goldleaf WS OK\n');
 });
 
-// ---------- Live leaderboard over WebSocket ----------
-const wss = new WebSocketServer({ server });
-const players = new Map(); // ws -> { id, name, coins, score, level }
+// ---------- WebSocket server ----------
+const wss = new WebSocketServer({ server, maxPayload: MAX_MSG_BYTES });
+const players = new Map();
 let nextId = 1;
 
 function buildBoard() {
@@ -60,37 +43,66 @@ function broadcastBoard() {
   }
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // --- Origin check (skip if no allowlist configured) ---
+  if (ALLOWED_ORIGINS.length > 0) {
+    const origin = (req.headers.origin || '').replace(/\/$/, '');
+    if (!ALLOWED_ORIGINS.includes(origin)) {
+      ws.close(1008, 'Origin not allowed');
+      return;
+    }
+  }
+
+  // --- Connection cap ---
+  if (players.size >= MAX_CONNECTIONS) {
+    ws.close(1013, 'Server full');
+    return;
+  }
+
   const p = { id: nextId++, name: 'Guest', coins: 0, score: 0, level: 1, lives: 3, status: 'playing' };
   players.set(ws, p);
   ws.isAlive = true;
+  ws.lastScore = 0;
 
   ws.send(JSON.stringify({ type: 'welcome', id: p.id }));
   broadcastBoard();
 
   ws.on('message', (raw) => {
+    // Guard: maxPayload already enforced by ws, but double-check string length
+    if (raw.length > MAX_MSG_BYTES) return;
+
     let m;
     try { m = JSON.parse(raw.toString()); } catch (e) { return; }
+
     if (m.type === 'join') {
-      p.name = String(m.name || 'Guest').slice(0, 16) || 'Guest';
+      p.name = String(m.name || 'Guest').replace(/[<>"'&]/g, '').slice(0, 16) || 'Guest';
+
     } else if (m.type === 'score') {
-      p.coins = Math.max(0, m.coins | 0);
-      p.score = Math.max(0, m.score | 0);
-      p.level = m.level | 0;
-      p.lives = Math.max(0, m.lives | 0);
+      // Rate-limit score updates
+      const now = Date.now();
+      if (now - ws.lastScore < RATE_LIMIT_MS) return;
+      ws.lastScore = now;
+
+      p.coins  = Math.max(0, Math.min(99999, m.coins | 0));
+      p.score  = Math.max(0, Math.min(9999999, m.score | 0));
+      p.level  = Math.max(1, Math.min(99, m.level | 0));
+      p.lives  = Math.max(0, Math.min(10, m.lives | 0));
       const allowed = ['playing', 'dead', 'over', 'win', 'done'];
       p.status = allowed.includes(m.status) ? m.status : 'playing';
+
     } else if (m.type === 'pong') {
       ws.isAlive = true;
+      return; // no board broadcast needed for pong
     }
+
     broadcastBoard();
   });
 
   ws.on('close', () => { players.delete(ws); broadcastBoard(); });
-  ws.on('error', () => { players.delete(ws); });
+  ws.on('error', () => { try { ws.terminate(); } catch (_) {} players.delete(ws); });
 });
 
-// drop dead connections + keep board fresh
+// Heartbeat: drop dead connections
 setInterval(() => {
   for (const ws of wss.clients) {
     if (ws.isAlive === false) { players.delete(ws); ws.terminate(); continue; }
@@ -98,10 +110,13 @@ setInterval(() => {
     if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping' }));
   }
   broadcastBoard();
-}, 5000);
+}, HEARTBEAT_MS);
 
 server.listen(PORT, () => {
-  console.log(`\n  Goldleaf running:  http://localhost:${PORT}`);
-  console.log(`  Multiplayer leaderboard is live (WebSocket on same port).`);
-  console.log(`  Others on your network can join via  http://<your-LAN-ip>:${PORT}\n`);
+  console.log(`\n  Goldleaf WS running on port ${PORT}`);
+  console.log(`  Max connections: ${MAX_CONNECTIONS}`);
+  if (ALLOWED_ORIGINS.length)
+    console.log(`  Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+  else
+    console.log(`  Origins: any (set ALLOWED_ORIGINS env var to restrict)`);
 });
