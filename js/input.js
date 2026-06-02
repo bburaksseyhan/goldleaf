@@ -6,6 +6,26 @@
 const keys = {};
 const touch = { left: false, right: false, jump: false, run: false };
 
+// iOS & Android: AudioContext requires a user-gesture to start.
+// Unlock it on the very first touch anywhere on the page.
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    const tmp = new C();
+    // create a silent buffer and play it to wake the context
+    const buf = tmp.createBuffer(1, 1, 22050);
+    const src = tmp.createBufferSource();
+    src.buffer = buf; src.connect(tmp.destination); src.start(0);
+    tmp.resume().catch(() => {}).then(() => tmp.close().catch(() => {}));
+  } catch (_) {}
+}
+document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+document.addEventListener('mousedown',  unlockAudio, { once: true, passive: true });
+
 export const Input = {
   get left()  { return keys['arrowleft'] || keys['a'] || touch.left; },
   get right() { return keys['arrowright'] || keys['d'] || touch.right; },
@@ -127,6 +147,10 @@ export function initInput(canvas, W, H, cb) {
   // run toggle (touch) — keyboard uses Shift instead
   const runBtn = document.getElementById('btnRun');
   if (runBtn) {
+    // ensure it always starts off (no stale class from hot-reload)
+    touch.run = false;
+    runBtn.classList.remove('on');
+
     const toggleRun = e => {
       e.preventDefault();
       touch.run = !touch.run;
@@ -139,27 +163,34 @@ export function initInput(canvas, W, H, cb) {
 
   const fsBtn = document.getElementById('btnFullscreen');
   if (fsBtn) {
-    const toggleFullscreen = e => {
-      if (e) e.preventDefault();
-      const root = document.documentElement;
-      const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      if (!isFs) {
-        const req = root.requestFullscreen || root.webkitRequestFullscreen;
-        if (req) {
-          req.call(root).then(() => {
-            if (screen.orientation && screen.orientation.lock)
-              screen.orientation.lock('landscape').catch(() => {});
-          }).catch(() => {});
+    // Detect fullscreen support. iOS Safari has no API at all.
+    const hasFs = !!(document.documentElement.requestFullscreen ||
+                     document.documentElement.webkitRequestFullscreen);
+
+    if (!hasFs) {
+      // iOS Safari: hide the button — it simply can't work
+      fsBtn.style.display = 'none';
+    } else {
+      const toggleFullscreen = e => {
+        if (e) e.preventDefault();
+        const root = document.documentElement;
+        const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        if (!isFs) {
+          const req = root.requestFullscreen || root.webkitRequestFullscreen;
+          req.call(root)
+            .then(() => {
+              if (screen.orientation && screen.orientation.lock)
+                screen.orientation.lock('landscape').catch(() => {});
+            })
+            .catch(() => {});
+        } else {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen;
+          if (exit) exit.call(document);
         }
-        // iOS Safari: no fullscreen API — scroll away the address bar instead
-        if (!req) window.scrollTo(0, 1);
-      } else {
-        const exit = document.exitFullscreen || document.webkitExitFullscreen;
-        if (exit) exit.call(document);
-      }
-    };
-    fsBtn.addEventListener('click', toggleFullscreen);
-    fsBtn.addEventListener('touchend', e => { e.preventDefault(); toggleFullscreen(e); }, { passive: false });
+      };
+      fsBtn.addEventListener('click', toggleFullscreen);
+      fsBtn.addEventListener('touchend', e => { e.preventDefault(); toggleFullscreen(e); }, { passive: false });
+    }
   }
 
   // map a client point to logical canvas coordinates
