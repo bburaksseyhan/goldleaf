@@ -1,0 +1,23 @@
+# fly.toml — Goldleaf WebSocket server on Fly.io
+# Run `fly launch` once to create the app, then `fly deploy` to push updates.
+
+app = "goldleaf-server"   # change this to your actual Fly app name
+primary_region = "ams"    # pick the region closest to your players
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https   = true        # Fly terminates TLS → game gets wss:// automatically
+  auto_stop_machines  = false # keep the server alive so WebSocket state is not lost
+  auto_start_machines = true
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 500
+    soft_limit = 400
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"

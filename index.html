@@ -4,9 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Goldleaf - A Forest Spirit Platformer</title>
-<!-- Optional: on a static host (e.g. Vercel) point multiplayer at a hosted WebSocket
-     server to enable the live gold race. Without it, the game runs single-player. -->
-<!-- <meta name="goldleaf-ws" content="wss://your-ws-server.example.com"> -->
+<!-- WebSocket server for the live Gold Race leaderboard.
+     Replace the URL below with your Fly.io app URL after `fly deploy`.
+     Format: wss://<your-app-name>.fly.dev
+     If left as placeholder the game runs single-player (no leaderboard). -->
+<meta name="goldleaf-ws" content="ws://165.245.243.111:8080">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -25,8 +27,10 @@
   <div class="tcBtn tcDir" id="btnLeft">&#9664;</div>
   <div class="tcBtn tcDir" id="btnRight">&#9654;</div>
   <div class="tcBtn" id="btnJump">JUMP</div>
+  <div class="tcBtn tcRun" id="btnRun">RUN</div>
   <div class="tcBtn tcTop" id="btnPause">II</div>
   <div class="tcBtn tcTop" id="btnFullscreen">&#9974;</div>
+  <div class="tcBtn tcTop" id="btnMute">&#128266;</div>
 </div>
 
 <div id="rotateHint">
@@ -34,7 +38,7 @@
   <p>Rotate your device to <b>landscape</b> to play Goldleaf.</p>
 </div>
 
-<div class="hint">Arrows/WASD to move &middot; Space/Up to jump (double jump!) &middot; P to pause &middot; M to mute</div>
+<div class="hint">Arrows/WASD to move &middot; Shift to run &middot; Space/Up to jump (double jump!) &middot; P to pause &middot; M to mute</div>
 
 <script type="module" src="js/main.js"></script>
 </body>

@@ -4,12 +4,13 @@
 // ============================================================
 
 const keys = {};
-const touch = { left: false, right: false, jump: false };
+const touch = { left: false, right: false, jump: false, run: false };
 
 export const Input = {
   get left()  { return keys['arrowleft'] || keys['a'] || touch.left; },
   get right() { return keys['arrowright'] || keys['d'] || touch.right; },
   get jumpDown() { return keys['arrowup'] || keys['w'] || keys[' '] || touch.jump; },
+  get run() { return keys['shift'] || touch.run; },
 };
 
 // callbacks: { onConfirm, onPause, onMute, onCanvasPoint, onResume }
@@ -22,7 +23,7 @@ export function initInput(canvas, W, H, cb) {
     cb.onResume();
 
     if (k === 'p') cb.onPause();
-    if (k === 'm') cb.onMute();
+    if (k === 'm') doMute();
     if (k === 'enter' || k === ' ') cb.onConfirm();
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -46,6 +47,36 @@ export function initInput(canvas, W, H, cb) {
 
   const pauseBtn = document.getElementById('btnPause');
   if (pauseBtn) pauseBtn.addEventListener('click', () => cb.onPause());
+
+  // mute toggle (keyboard 'm' and the on-screen button share this)
+  const muteBtn = document.getElementById('btnMute');
+  function updateMuteIcon(muted) {
+    if (!muteBtn) return;
+    muteBtn.innerHTML = muted ? '&#128263;' : '&#128266;'; // 🔇 / 🔊
+    muteBtn.classList.toggle('muted', !!muted);
+  }
+  function doMute() {
+    const m = cb.onMute();
+    updateMuteIcon(m);
+  }
+  if (muteBtn) {
+    const onMutePress = e => { e.preventDefault(); doMute(); };
+    muteBtn.addEventListener('click', onMutePress);
+    muteBtn.addEventListener('touchend', onMutePress, { passive: false });
+  }
+
+  // run toggle (touch) — keyboard uses Shift instead
+  const runBtn = document.getElementById('btnRun');
+  if (runBtn) {
+    const toggleRun = e => {
+      e.preventDefault();
+      touch.run = !touch.run;
+      runBtn.classList.toggle('on', touch.run);
+      cb.onResume();
+    };
+    runBtn.addEventListener('click', toggleRun);
+    runBtn.addEventListener('touchend', toggleRun, { passive: false });
+  }
 
   const fsBtn = document.getElementById('btnFullscreen');
   if (fsBtn) {

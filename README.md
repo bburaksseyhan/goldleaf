@@ -26,6 +26,65 @@ Then open <http://localhost:8080/> in your browser.
 > Single-player still works with any static server (e.g. `python3 -m http.server`),
 > but the leaderboard will show "offline" unless the Node server is running.
 
+## Deploy to Fly.io (WebSocket server — full multiplayer)
+
+Fly.io keeps the Node.js server running continuously, which means the live
+**Gold Race leaderboard works** over `wss://`.
+
+### 1 — Install the Fly CLI
+
+```bash
+brew install flyctl        # macOS
+# or: curl -L https://fly.io/install.sh | sh
+```
+
+### 2 — Log in & create the app
+
+```bash
+fly auth login
+fly launch --name goldleaf-server --no-deploy
+# accept the defaults; a fly.toml is already present in the repo
+```
+
+### 3 — Deploy
+
+```bash
+fly deploy
+# Fly builds the Dockerfile, pushes the image, and starts the machine.
+# You'll see: https://goldleaf-server.fly.dev
+```
+
+### 4 — Point the Vercel frontend at the Fly server
+
+Open `index.html` and update the meta tag with your actual Fly app URL:
+
+```html
+<meta name="goldleaf-ws" content="wss://goldleaf-server.fly.dev">
+```
+
+Then redeploy to Vercel:
+
+```bash
+vercel --prod
+```
+
+From now on the static game loads from Vercel (fast CDN) and multiplayer
+connects to the Fly server (`wss://goldleaf-server.fly.dev`).
+
+### Updating the server
+
+```bash
+fly deploy           # rebuild & push; zero-downtime rolling deploy
+fly logs             # tail live logs
+fly status           # machine health
+```
+
+> **Note:** The leaderboard state lives in memory. A server restart clears
+> the scoreboard (fine for a demo). `auto_stop_machines = false` in
+> `fly.toml` keeps the machine always on so WebSocket state is not lost.
+
+---
+
 ## Deploy to Vercel
 
 The whole game (all 6 levels, boss, power-ups, bonus mechanics) runs as a **static site**,

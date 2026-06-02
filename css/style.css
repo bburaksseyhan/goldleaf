@@ -56,10 +56,20 @@ html, body {
   background: rgba(255, 120, 80, 0.32); border-color: rgba(255, 150, 90, 0.7);
 }
 
+/* run toggle (left side, above the D-pad) */
+.tcRun {
+  left: max(20px, env(safe-area-inset-left)); bottom: 184px;
+  width: 72px; height: 64px; font-size: 18px; font-weight: bold;
+  background: rgba(120, 200, 255, 0.22); border-color: rgba(150, 210, 255, 0.6);
+}
+.tcRun.on { background: rgba(80, 220, 140, 0.4); border-color: rgba(120, 255, 170, 0.9); color: #06351f; }
+
 /* top utility buttons */
 .tcTop { top: max(16px, env(safe-area-inset-top)); width: 54px; height: 54px; font-size: 20px; }
 #btnPause { right: max(16px, env(safe-area-inset-right)); }
 #btnFullscreen { right: calc(max(16px, env(safe-area-inset-right)) + 66px); font-size: 26px; }
+#btnMute { right: calc(max(16px, env(safe-area-inset-right)) + 132px); font-size: 22px; }
+#btnMute.muted { background: rgba(255, 90, 90, 0.32); border-color: rgba(255, 120, 120, 0.7); }
 
 /* shrink controls on short/landscape phones so they don't cover the action */
 @media (max-height: 450px) {

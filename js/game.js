@@ -2,7 +2,7 @@
 //  game.js - Core game: state, flow, update, render, UI, loop
 // ============================================================
 import {
-  W, H, GRAVITY, MOVE_SPEED, BOOST_SPEED, ACCEL, FRICTION, JUMP_VELOCITY,
+  W, H, GRAVITY, MOVE_SPEED, RUN_SPEED, BOOST_SPEED, ACCEL, FRICTION, JUMP_VELOCITY,
   MAX_FALL, SPEED_DURATION, STAR_DURATION, LIVES_PER_LEVEL, CHARACTERS,
   STATE, STORAGE_HIGH, STORAGE_PROGRESS, STORAGE_CHAR,
 } from './config.js';
@@ -32,10 +32,17 @@ for (const c of ['green', 'blue', 'orange']) {
 }
 Assets.load('bushIdle', 'assets/bush/Bush-Idle.png');
 Assets.load('bushDie', 'assets/bush/Bush-Die.png');
+for (let i = 0; i < CHARACTERS.length; i++) {
+  Assets.load('pl' + i + 'Idle', 'assets/player/idle_' + i + '.png');
+  Assets.load('pl' + i + 'Run', 'assets/player/run_' + i + '.png');
+  Assets.load('pl' + i + 'Jump', 'assets/player/jump_' + i + '.png');
+}
 const MUSH_FW = 80, MUSH_FH = 64; // mushroom frame size
 const FLY_FW = 64, FLY_FH = 64;   // flyer frame size
 const SLIME_FW = 64, SLIME_FH = 64; // slime frame size
 const BUSH_FW = 90, BUSH_FH = 64;   // bush monster frame size
+const PLAYER_FW = 64, PLAYER_FH = 64; // player frame size (Leafy sprite)
+const PL_IDLE_N = 24, PL_RUN_N = 8, PL_JUMP_N = 2;
 
 // ---------- Shared state ----------
 let gameState = STATE.MENU;
@@ -90,7 +97,7 @@ export function init(_canvas, _ctx) {
   initInput(canvas, W, H, {
     onConfirm: handleConfirm,
     onPause: togglePause,
-    onMute: () => { const m = toggleMute(); if (m) Music.stop(); else if (gameState === STATE.PLAYING) Music.start(); },
+    onMute: () => { const m = toggleMute(); if (m) Music.stop(); else if (gameState === STATE.PLAYING) Music.start(); return m; },
     onCanvasPoint: handleCanvasPoint,
     onResume: () => Sound.resume(),
   });
@@ -294,11 +301,12 @@ function update() {
   if (player.boostTimer > 0) player.boostTimer--;
   if (player.starTimer > 0) player.starTimer--;
 
-  const maxSpeed = player.boostTimer > 0 ? BOOST_SPEED : MOVE_SPEED;
+  const maxSpeed = player.boostTimer > 0 ? BOOST_SPEED : (Input.run ? RUN_SPEED : MOVE_SPEED);
+  const accel = Input.run ? ACCEL * 1.35 : ACCEL; // snappier acceleration while sprinting
 
   // horizontal movement
-  if (Input.left) { player.vx -= ACCEL; player.facing = -1; }
-  if (Input.right) { player.vx += ACCEL; player.facing = 1; }
+  if (Input.left) { player.vx -= accel; player.facing = -1; }
+  if (Input.right) { player.vx += accel; player.facing = 1; }
   if (!Input.left && !Input.right) player.vx *= FRICTION;
   player.vx = Math.max(-maxSpeed, Math.min(maxSpeed, player.vx));
   if (Math.abs(player.vx) < 0.05) player.vx = 0;
@@ -349,7 +357,12 @@ function update() {
   // world bounds
   if (player.x < 0) { player.x = 0; player.vx = 0; }
   if (player.x + player.w > level.width) { player.x = level.width - player.w; player.vx = 0; }
-  if (player.y > H + 200) killPlayer();
+  // fell into a pit / off the bottom of the world -> always fatal (ignore
+  // spawn invulnerability and star power so you can't walk around down there)
+  if (player.y > H + 120 && !player.dead) {
+    player.invuln = 0; player.starTimer = 0;
+    killPlayer();
+  }
 
   updateCoins();
   updatePowerups();
@@ -989,9 +1002,6 @@ function drawBackground() {
   if (!level.arena) {
     const t1 = -camera.x * 0.5;
     const ty = 460 - dy * 0.6;
-    // earth band beneath the tree line so no empty sky shows under them when high
-    ctx.fillStyle = '#6e9e5a';
-    ctx.fillRect(0, ty + 6, W, H);
     for (let i = -1; i < 18; i++) tree(t1 + i * 220 + 40, ty);
   }
 }
@@ -1025,24 +1035,72 @@ function tree(x, baseY) {
 // ---------- Waterfalls (animated, world-space) ----------
 function drawWaterfalls() {
   for (const wf of (level.waterfalls || [])) {
-    const wWidth = 46;
-    ctx.fillStyle = 'rgba(120,200,255,0.55)';
-    ctx.fillRect(wf.x, wf.y, wWidth, wf.h);
-    ctx.fillStyle = 'rgba(200,240,255,0.7)';
-    for (let i = 0; i < 4; i++) {
-      const offset = (waterPhase * 4 + i * 40) % 80;
-      for (let yy = wf.y - 80 + offset; yy < wf.y + wf.h; yy += 80) {
-        ctx.fillRect(wf.x + 6 + i * 11, yy, 5, 40);
+    const baseW = 46;
+    const x = wf.x, y = wf.y, h = wf.h;
+    const cx = x + baseW / 2;
+    ctx.save();
+
+    // soft mist halo behind the stream (wide, faint, fades on the sides)
+    const halo = ctx.createLinearGradient(x - 14, 0, x + baseW + 14, 0);
+    halo.addColorStop(0, 'rgba(190,230,255,0)');
+    halo.addColorStop(0.5, 'rgba(200,235,255,0.16)');
+    halo.addColorStop(1, 'rgba(190,230,255,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(x - 14, y - 8, baseW + 28, h + 16);
+
+    // body: horizontal slices give a gently wavering width + edge glow + vertical fade
+    for (let yy = 0; yy < h; yy += 8) {
+      const t = yy / h;
+      const wob = Math.sin(yy * 0.05 + waterPhase * 3) * 3;       // width ripple
+      const w = baseW + wob + t * 6;                              // widens slightly toward the pool
+      const a = 0.40 + t * 0.14;
+      const g = ctx.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+      g.addColorStop(0, `rgba(120,195,255,${(a * 0.45).toFixed(3)})`);
+      g.addColorStop(0.5, `rgba(214,242,255,${a.toFixed(3)})`);
+      g.addColorStop(1, `rgba(120,195,255,${(a * 0.45).toFixed(3)})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - w / 2, y + yy, w, 9);
+    }
+
+    // bright falling streaks at varying speeds / widths / lengths
+    for (let i = 0; i < 5; i++) {
+      const speed = 26 + i * 9;
+      const sw = 3 + (i % 2);
+      const sx = x + 7 + i * 8;
+      const period = 64 + i * 10;
+      const len = 30 + i * 6;
+      ctx.fillStyle = `rgba(248,253,255,${(0.55 - i * 0.06).toFixed(3)})`;
+      const offset = (waterPhase * speed + i * 33) % period;
+      for (let yy = y - period + offset; yy < y + h - 8; yy += period) {
+        const top = Math.max(y, yy);
+        const bottom = Math.min(y + h - 4, yy + len);
+        if (bottom > top) ctx.fillRect(sx, top, sw, bottom - top);
       }
     }
-    // foam pool
-    ctx.fillStyle = 'rgba(220,250,255,0.8)';
-    for (let i = 0; i < 6; i++) {
-      const r = 6 + Math.sin(waterPhase + i) * 3;
+
+    // top lip where the water spills over
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    roundRect(x + 1, y - 4, baseW - 2, 7, 3); ctx.fill();
+
+    // foam pool at the base
+    const baseY = y + h;
+    ctx.fillStyle = 'rgba(232,250,255,0.85)';
+    for (let i = 0; i < 8; i++) {
+      const r = 5 + Math.sin(waterPhase * 2 + i) * 3;
       ctx.beginPath();
-      ctx.arc(wf.x + 4 + i * 8, wf.y + wf.h, r, 0, Math.PI * 2);
+      ctx.arc(x - 2 + i * 7, baseY, r, 0, Math.PI * 2);
       ctx.fill();
     }
+    // splash droplets bouncing up out of the pool
+    ctx.fillStyle = 'rgba(224,247,255,0.75)';
+    for (let i = 0; i < 7; i++) {
+      const ph = (waterPhase * 2.4 + i * 1.7) % Math.PI;
+      const dy = Math.sin(ph) * 18;
+      const dx = (i - 3) * 6;
+      const s = 2 + (i % 2);
+      ctx.fillRect(cx + dx - s / 2, baseY - dy, s, s);
+    }
+    ctx.restore();
   }
 }
 
@@ -1665,6 +1723,48 @@ function drawBoss() {
 // ---------- Player ----------
 function drawPlayer() {
   const px = Math.round(player.x), py = Math.round(player.y);
+  if (drawPlayerSprite(px, py)) return;
+  drawPlayerFallback(px, py);
+}
+
+// Leafy sprite character. Returns false (so the fallback runs) until loaded.
+function drawPlayerSprite(px, py) {
+  const st = player.state;
+  const pfx = 'pl' + selectedChar;
+  let key = pfx + 'Idle', fcount = PL_IDLE_N, fps = 7;
+  if (st === 'run') { key = pfx + 'Run'; fcount = PL_RUN_N; fps = 14; }
+  else if (st === 'jump') { key = pfx + 'Jump'; fcount = PL_JUMP_N; fps = 6; }
+  if (!Assets.ready(key)) return false;
+
+  let frame;
+  if (st === 'jump') frame = player.vy < 0 ? 0 : 1; // rising vs falling
+  else frame = Math.floor(Date.now() / (1000 / fps)) % fcount;
+
+  ctx.save();
+  if (player.invuln > 0 && player.starTimer <= 0 && Math.floor(player.invuln / 4) % 2 === 0) ctx.globalAlpha = 0.4;
+  if (player.starTimer > 0) {
+    starHue = (starHue + 18) % 360;
+    ctx.shadowColor = `hsl(${starHue},90%,60%)`; ctx.shadowBlur = 16;
+  } else if (player.boostTimer > 0) {
+    ctx.shadowColor = '#4dd2ff'; ctx.shadowBlur = 10;
+  }
+
+  const dh = 58, dw = 58;
+  const dx = px + player.w / 2 - dw / 2;
+  const dy = py + player.h - dh + 7;
+  const img = Assets.images[key];
+  ctx.imageSmoothingEnabled = false;
+  if (player.facing < 0) {
+    ctx.translate(dx + dw, dy); ctx.scale(-1, 1);
+    ctx.drawImage(img, frame * PLAYER_FW, 0, PLAYER_FW, PLAYER_FH, 0, 0, dw, dh);
+  } else {
+    ctx.drawImage(img, frame * PLAYER_FW, 0, PLAYER_FW, PLAYER_FH, dx, dy, dw, dh);
+  }
+  ctx.restore();
+  return true;
+}
+
+function drawPlayerFallback(px, py) {
   ctx.save();
   if (player.invuln > 0 && player.starTimer <= 0 && Math.floor(player.invuln / 4) % 2 === 0) ctx.globalAlpha = 0.4;
 
@@ -1685,54 +1785,66 @@ function drawPlayer() {
     ctx.shadowColor = '#4dd2ff'; ctx.shadowBlur = 8;
   }
 
-  let legOffset = 0, armOffset = 0, bodyY = 0;
-  if (player.state === 'run') { legOffset = Math.sin(player.animFrame * Math.PI / 2) * 5; armOffset = -legOffset; }
-  else if (player.state === 'jump') { legOffset = 4; armOffset = -3; }
-  else bodyY = Math.sin(Date.now() * 0.005) * 1.2;
+  // Side-on profile (faces +x; the whole sprite is flipped for facing left).
+  // Running swings legs/arms forward & back so the hero runs where it looks.
+  let strideX = 0, liftFront = 0, liftBack = 0, armSwing = 0, bodyY = 0;
+  if (player.state === 'run') {
+    const p = Math.sin(player.animFrame * Math.PI / 2);
+    strideX = p * 5; armSwing = p * 4;
+    liftFront = Math.max(0, -p) * 3;
+    liftBack = Math.max(0, p) * 3;
+  } else if (player.state === 'jump') {
+    strideX = 4; armSwing = -3; liftFront = 2;
+  } else {
+    bodyY = Math.sin(Date.now() * 0.005) * 1.2;
+  }
 
+  // legs: back (left) and front (right) stride opposite each other
   ctx.fillStyle = char.overall;
-  ctx.fillRect(x + 4, y + h - 12 + legOffset, 8, 12);
-  ctx.fillRect(x + w - 12, y + h - 12 - legOffset, 8, 12);
+  ctx.fillRect(x + 5 - strideX, y + h - 12 + liftBack, 8, 12);
+  ctx.fillRect(x + w - 13 + strideX, y + h - 12 + liftFront, 8, 12);
   ctx.fillStyle = '#5a2d0c';
-  ctx.fillRect(x + 3, y + h - 4 + legOffset, 10, 4);
-  ctx.fillRect(x + w - 13, y + h - 4 - legOffset, 10, 4);
+  ctx.fillRect(x + 4 - strideX, y + h - 4 + liftBack, 11, 4);
+  ctx.fillRect(x + w - 15 + strideX, y + h - 4 + liftFront, 11, 4);
 
   // tunic body + earthy belt
   ctx.fillStyle = bodyColor; ctx.fillRect(x + 3, y + 12 + bodyY, w - 6, 16);
   ctx.fillStyle = char.overall; ctx.fillRect(x + 6, y + 18 + bodyY, w - 12, 12);
-  // little glowing seed accents on the tunic
+  // glowing seed accent toward the front
   ctx.fillStyle = '#d4e157';
-  ctx.fillRect(x + 8, y + 20 + bodyY, 3, 3); ctx.fillRect(x + w - 11, y + 20 + bodyY, 3, 3);
+  ctx.fillRect(x + w - 12, y + 20 + bodyY, 3, 3);
 
-  // arms
+  // arms swing opposite the legs (back arm behind body, front arm ahead)
   ctx.fillStyle = bodyColor;
-  ctx.fillRect(x + 1, y + 14 + bodyY + armOffset, 5, 10);
-  ctx.fillRect(x + w - 6, y + 14 + bodyY - armOffset, 5, 10);
+  ctx.fillRect(x + 2 - armSwing, y + 14 + bodyY, 5, 10);
+  ctx.fillRect(x + w - 7 + armSwing, y + 14 + bodyY, 5, 10);
   ctx.fillStyle = char.skin;
-  ctx.fillRect(x + 1, y + 22 + bodyY + armOffset, 5, 4);
-  ctx.fillRect(x + w - 6, y + 22 + bodyY - armOffset, 5, 4);
+  ctx.fillRect(x + 2 - armSwing, y + 22 + bodyY, 5, 4);
+  ctx.fillRect(x + w - 7 + armSwing, y + 22 + bodyY, 5, 4);
 
-  // face
-  ctx.fillStyle = char.skin; ctx.fillRect(x + 5, y + 4 + bodyY, w - 10, 10);
-  // eyes
+  // face (profile, looking toward +x) with a little nose nub on the leading edge
+  ctx.fillStyle = char.skin;
+  ctx.fillRect(x + 5, y + 4 + bodyY, w - 10, 10);
+  ctx.fillRect(x + w - 4, y + 8 + bodyY, 4, 4);
+  // eyes toward the front (one prominent, one peeking)
   ctx.fillStyle = '#000';
-  ctx.fillRect(x + w - 12, y + 7 + bodyY, 3, 3);
-  ctx.fillRect(x + 8, y + 7 + bodyY, 3, 3);
-  // leaf cap (pointed hood) replacing the old hat
+  ctx.fillRect(x + w - 10, y + 7 + bodyY, 3, 3);
+  ctx.fillRect(x + w - 15, y + 7 + bodyY, 2, 3);
+  // leaf cap with the tip leaning forward
   ctx.fillStyle = bodyColor;
   ctx.beginPath();
   ctx.moveTo(x + 2, y + 6 + bodyY);
-  ctx.lineTo(x + w / 2 + 2, y - 7 + bodyY);
+  ctx.lineTo(x + w - 6, y - 8 + bodyY);
   ctx.lineTo(x + w - 2, y + 6 + bodyY);
   ctx.closePath();
   ctx.fill();
   // curled leaf tip
-  ctx.fillRect(x + w / 2 + 1, y - 9 + bodyY, 3, 4);
+  ctx.fillRect(x + w - 8, y - 10 + bodyY, 3, 4);
   // leaf vein highlight
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(x + 5, y + 5 + bodyY);
-  ctx.lineTo(x + w / 2 + 1, y - 5 + bodyY);
+  ctx.lineTo(x + w - 7, y - 6 + bodyY);
   ctx.stroke();
 
   ctx.restore();
@@ -2012,14 +2124,14 @@ function drawMenu() {
   ctx.font = 'bold 22px "Courier New", monospace';
   ctx.fillStyle = '#fff'; ctx.fillText('A Forest Spirit Adventure', W / 2, ty + 44);
 
-  drawMenuHero(W / 2 - 14, ty + 64, CHARACTERS[selectedChar]);
+  drawHeroSprite(W / 2, ty + 116, selectedChar, 64);
   ctx.font = 'bold 13px "Courier New", monospace';
   ctx.fillStyle = '#1a1a2e';
-  ctx.fillText('Hero: ' + CHARACTERS[selectedChar].name, W / 2, ty + 124);
+  ctx.fillText('Hero: ' + CHARACTERS[selectedChar].name, W / 2, ty + 132);
 
   ctx.font = '15px "Courier New", monospace';
   ctx.fillStyle = '#1a1a2e';
-  ctx.fillText('Move: Arrows / WASD   Jump: Space / Up (Double Jump!)   P: Pause   M: Mute', W / 2, H - 176);
+  ctx.fillText('Move: Arrows / WASD   Run: Shift   Jump: Space / Up (Double Jump!)   P: Pause   M: Mute', W / 2, H - 176);
   ctx.fillText('Stomp enemies, grab power-ups & coins, reach the flag — beat the boss!', W / 2, H - 156);
 
   makeButton('start', 'START GAME', W / 2 - 340, H - 116, 215, 52, () => startGame(0), '#2a9d8f');
@@ -2030,6 +2142,22 @@ function drawMenu() {
   drawLeaderboardPanel(W - 250, 150, 232, 5, 'GOLD RACE');
   ctx.textAlign = 'left';
 }
+// New: blit the Leafy sprite (per-character tint) centered at cx with feet at feetY.
+// Falls back to the procedural hero drawing until the sheet has loaded.
+function drawHeroSprite(cx, feetY, idx, size) {
+  const key = 'pl' + idx + 'Idle';
+  if (!Assets.ready(key)) {
+    drawMenuHero(cx - size / 2 + (size - 28) / 2, feetY - size + 8, CHARACTERS[idx]);
+    return;
+  }
+  const frame = Math.floor(Date.now() / 140) % PL_IDLE_N;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(Assets.images[key], frame * PLAYER_FW, 0, PLAYER_FW, PLAYER_FH,
+    Math.round(cx - size / 2), Math.round(feetY - size), size, size);
+  ctx.restore();
+}
+
 function drawMenuHero(x, y, char) {
   char = char || CHARACTERS[0];
   // legs + tunic
@@ -2073,12 +2201,8 @@ function drawCharSelect() {
     roundRect(x, y, cellW, cellH, 12); ctx.fill();
     ctx.strokeStyle = isSel ? '#ffd700' : '#888'; ctx.lineWidth = isSel ? 4 : 2;
     roundRect(x, y, cellW, cellH, 12); ctx.stroke();
-    // big hero preview (scaled)
-    ctx.save();
-    ctx.translate(x + cellW / 2 - 28, y + 26);
-    ctx.scale(2, 2);
-    drawMenuHero(0, 0, CHARACTERS[i]);
-    ctx.restore();
+    // big hero preview (Leafy sprite, per-character tint)
+    drawHeroSprite(x + cellW / 2, y + cellH - 34, i, 92);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 22px "Courier New", monospace';
     ctx.textAlign = 'center';
