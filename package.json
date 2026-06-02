@@ -1,0 +1,12 @@
+{
+  "name": "goldleaf",
+  "version": "1.0.0",
+  "description": "Goldleaf - a forest-spirit 2D platformer with a live multiplayer gold race leaderboard.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

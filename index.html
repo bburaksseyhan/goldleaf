@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Goldleaf - A Forest Spirit Platformer</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="gameWrap">
+  <canvas id="game" width="960" height="540"></canvas>
+</div>
+
+<div id="nameBar">
+  <span id="netDot" class="off" title="connection status"></span>
+  <label for="nameInput">NAME</label>
+  <input id="nameInput" maxlength="16" placeholder="your name" autocomplete="off" spellcheck="false">
+  <span id="netInfo">offline</span>
+</div>
+
+<div id="touchControls">
+  <div class="tcBtn tcDir" id="btnLeft">&#9664;</div>
+  <div class="tcBtn tcDir" id="btnRight">&#9654;</div>
+  <div class="tcBtn" id="btnJump">JUMP</div>
+  <div class="tcBtn tcTop" id="btnPause">II</div>
+  <div class="tcBtn tcTop" id="btnFullscreen">&#9974;</div>
+</div>
+
+<div id="rotateHint">
+  <div class="rotateIcon">&#128241;</div>
+  <p>Rotate your device to <b>landscape</b> to play Goldleaf.</p>
+</div>
+
+<div class="hint">Arrows/WASD to move &middot; Space/Up to jump (double jump!) &middot; P to pause &middot; M to mute</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
