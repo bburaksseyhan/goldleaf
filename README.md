@@ -26,6 +26,33 @@ Then open <http://localhost:8080/> in your browser.
 > Single-player still works with any static server (e.g. `python3 -m http.server`),
 > but the leaderboard will show "offline" unless the Node server is running.
 
+## Deploy to Vercel
+
+The whole game (all 6 levels, boss, power-ups, bonus mechanics) runs as a **static site**,
+so it deploys to Vercel out of the box:
+
+```bash
+npm i -g vercel   # once
+vercel            # from the project root, follow the prompts
+vercel --prod     # deploy to production
+```
+
+Or just import the GitHub repo at <https://vercel.com/new>. `vercel.json` is already
+configured to serve the repo root statically (no build step).
+
+**Multiplayer note:** Vercel is serverless and cannot host a long-lived WebSocket
+server, so the live "GOLD RACE" leaderboard is automatically **disabled** on a plain
+Vercel deploy (the game stays single-player and shows "offline" — no errors). To keep
+multiplayer, host `server/server.js` on a Node platform that supports WebSockets
+(Render, Railway, Fly.io, a VPS…) and point the client at it by uncommenting the meta
+tag in `index.html`:
+
+```html
+<meta name="goldleaf-ws" content="wss://your-ws-server.example.com">
+```
+
+(or set `window.GOLDLEAF_WS = 'wss://…'` before the game script loads).
+
 ## Controls
 
 | Action      | Keys                        |

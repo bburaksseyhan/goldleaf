@@ -14,14 +14,33 @@ let lastSent = 0;
 let reconnectTimer = null;
 let lastReport = { coins: 0, score: 0, level: 1, lives: 3, status: 'playing' };
 
+function overrideUrl() {
+  // Lets a static deploy (e.g. Vercel) point at a hosted WebSocket server.
+  const meta = document.querySelector('meta[name="goldleaf-ws"]');
+  return String((window.GOLDLEAF_WS || (meta && meta.content) || '')).trim();
+}
+
 function serverUrl() {
+  const ov = overrideUrl();
+  if (ov) return ov;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${location.host}`;
 }
 
+function canConnect() {
+  // An explicit ws server always wins.
+  if (overrideUrl()) return true;
+  if (!location.host) return false; // file://
+  // Same-origin WS only exists when our own Node server is serving the page
+  // (local dev / self-host). On a static host (Vercel) there is no ws server,
+  // so stay gracefully offline instead of spamming failed reconnects.
+  return location.hostname === 'localhost'
+    || location.hostname === '127.0.0.1'
+    || location.protocol === 'http:';
+}
+
 function open() {
-  // Only meaningful when the page is served over http(s) (not file://)
-  if (!location.host) return;
+  if (!canConnect()) return;
   try { ws = new WebSocket(serverUrl()); }
   catch (e) { scheduleReconnect(); return; }
 
