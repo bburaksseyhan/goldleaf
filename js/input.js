@@ -28,7 +28,68 @@ export function initInput(canvas, W, H, cb) {
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
-  // touch buttons
+  // ---- Virtual joystick ----
+  const joystickEl = document.getElementById('joystick');
+  const knobEl     = document.getElementById('joystickKnob');
+  if (joystickEl && knobEl) {
+    let joyTouchId = null;
+    const DEAD  = 14;  // px dead zone before left/right fires
+    const MAX_R = 38;  // max knob travel radius (px)
+
+    const joyMove = (cx, cy) => {
+      const r = joystickEl.getBoundingClientRect();
+      const dx = cx - (r.left + r.width  / 2);
+      const dy = cy - (r.top  + r.height / 2);
+      const dist  = Math.sqrt(dx * dx + dy * dy);
+      const ratio = Math.min(1, dist / MAX_R);
+      const angle = Math.atan2(dy, dx);
+      const kx = Math.cos(angle) * ratio * MAX_R;
+      const ky = Math.sin(angle) * ratio * MAX_R;
+      knobEl.style.transform = `translate(calc(-50% + ${kx.toFixed(1)}px), calc(-50% + ${ky.toFixed(1)}px))`;
+      touch.left  = dx < -DEAD;
+      touch.right = dx >  DEAD;
+    };
+
+    const joyEnd = () => {
+      joyTouchId = null;
+      knobEl.style.transform = 'translate(-50%, -50%)';
+      touch.left = touch.right = false;
+    };
+
+    joystickEl.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      joyTouchId = t.identifier;
+      joyMove(t.clientX, t.clientY);
+      cb.onResume();
+    }, { passive: false });
+
+    window.addEventListener('touchmove', e => {
+      if (joyTouchId === null) return;
+      for (const t of e.changedTouches) {
+        if (t.identifier === joyTouchId) { joyMove(t.clientX, t.clientY); break; }
+      }
+    }, { passive: false });
+
+    const joyTouchEnd = e => {
+      for (const t of e.changedTouches) {
+        if (t.identifier === joyTouchId) { joyEnd(); break; }
+      }
+    };
+    window.addEventListener('touchend',    joyTouchEnd, { passive: false });
+    window.addEventListener('touchcancel', joyTouchEnd, { passive: false });
+
+    // mouse fallback for desktop testing
+    joystickEl.addEventListener('mousedown', e => {
+      joyTouchId = -1; joyMove(e.clientX, e.clientY); cb.onResume();
+    });
+    window.addEventListener('mousemove', e => {
+      if (joyTouchId !== -1) return; joyMove(e.clientX, e.clientY);
+    });
+    window.addEventListener('mouseup', () => { if (joyTouchId === -1) joyEnd(); });
+  }
+
+  // jump button
   const bind = (id, prop) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -41,8 +102,6 @@ export function initInput(canvas, W, H, cb) {
     el.addEventListener('mouseup', off);
     el.addEventListener('mouseleave', off);
   };
-  bind('btnLeft', 'left');
-  bind('btnRight', 'right');
   bind('btnJump', 'jump');
 
   const pauseBtn = document.getElementById('btnPause');
@@ -82,18 +141,25 @@ export function initInput(canvas, W, H, cb) {
   if (fsBtn) {
     const toggleFullscreen = e => {
       if (e) e.preventDefault();
-      const el = document.documentElement;
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
-        if (screen.orientation && screen.orientation.lock) {
-          screen.orientation.lock('landscape').catch(() => {});
+      const root = document.documentElement;
+      const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (!isFs) {
+        const req = root.requestFullscreen || root.webkitRequestFullscreen;
+        if (req) {
+          req.call(root).then(() => {
+            if (screen.orientation && screen.orientation.lock)
+              screen.orientation.lock('landscape').catch(() => {});
+          }).catch(() => {});
         }
+        // iOS Safari: no fullscreen API — scroll away the address bar instead
+        if (!req) window.scrollTo(0, 1);
       } else {
-        (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) exit.call(document);
       }
     };
     fsBtn.addEventListener('click', toggleFullscreen);
-    fsBtn.addEventListener('touchend', toggleFullscreen, { passive: false });
+    fsBtn.addEventListener('touchend', e => { e.preventDefault(); toggleFullscreen(e); }, { passive: false });
   }
 
   // map a client point to logical canvas coordinates
