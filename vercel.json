@@ -5,7 +5,6 @@
   "buildCommand": "echo 'static site - nothing to build'",
   "outputDirectory": ".",
   "cleanUrls": true,
-  "analytics": { "enabled": true },
   "headers": [
     {
       "source": "/assets/(.*)",
